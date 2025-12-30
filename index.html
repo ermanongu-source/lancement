@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoveMyCar | Plateforme de Convoyage Automobile Professionnelle</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://js.stripe.com/v3/"></script>
+    
+    <!-- Leaflet Maps CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+        .hidden { display: none; }
+        #toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 1000; }
+        .message-sent { background: #2563eb; color: white; margin-left: auto; border-radius: 1rem 1rem 0 1rem; }
+        .message-received { background: #f1f5f9; color: #1e293b; margin-right: auto; border-radius: 1rem 1rem 1rem 0; }
+        .btn-active { background-color: #2563eb !important; color: white !important; }
+        
+        #chat-messages::-webkit-scrollbar { width: 4px; }
+        #chat-messages::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+
+        .stripe-input {
+            border: 1px solid #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            background: white;
+            transition: all 0.2s;
+        }
+        .stripe-input:focus-within {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+        }
+
+        #map {
+            height: 400px;
+            width: 100%;
+            border-radius: 1.5rem;
+            z-index: 10;
+        }
+
+        .hero-pattern {
+            background-image: radial-gradient(#2563eb 0.5px, transparent 0.5px);
+            background-size: 24px 24px;
+            opacity: 0.1;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 overflow-x-hidden font-light">
+
+    <div id="toast-container"></div>
+
+    <!-- MODAL DE PAIEMENT STRIPE -->
+    <div id="payment-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 animate-in zoom-in duration-300">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold flex items-center text-slate-900">
+                    <i data-lucide="credit-card" class="mr-2 text-blue-600"></i> Paiement Sécurisé
+                </h3>
+                <button onclick="closePaymentModal()" class="text-slate-400 hover:text-slate-600 transition-colors"><i data-lucide="x"></i></button>
+            </div>
+            
+            <div class="space-y-6">
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <p class="text-xs text-slate-500 uppercase font-bold mb-1">Montant à régler</p>
+                    <p class="text-2xl font-black text-slate-900" id="pay-amount">0.00€</p>
+                </div>
+
+                <div class="space-y-4">
+                    <label class="text-sm font-bold text-slate-700">Informations de carte</label>
+                    <div class="stripe-input flex items-center">
+                        <i data-lucide="credit-card" class="w-4 h-4 text-slate-400 mr-3"></i>
+                        <input type="text" placeholder="4242 4242 4242 4242" class="outline-none w-full text-sm font-medium">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="stripe-input">
+                            <input type="text" placeholder="MM / YY" class="outline-none w-full text-sm text-center font-medium">
+                        </div>
+                        <div class="stripe-input">
+                            <input type="text" placeholder="CVC" class="outline-none w-full text-sm text-center font-medium">
+                        </div>
+                    </div>
+                </div>
+
+                <button id="confirm-payment-btn" class="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 shadow-xl flex items-center justify-center transition-all active:scale-[0.98]">
+                    <span>Valider le règlement</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NAVIGATION -->
+    <nav class="fixed w-full z-50 glass border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-20 items-center">
+                <div class="flex items-center space-x-2 cursor-pointer" onclick="showView('home')">
+                    <div class="bg-blue-600 p-2 rounded-lg text-white">
+                        <i data-lucide="car"></i>
+                    </div>
+                    <span class="text-2xl font-bold tracking-tight uppercase text-slate-900">MOVE<span class="text-blue-600 font-black">MYCAR</span></span>
+                </div>
+                
+                <div class="hidden md:flex space-x-6 items-center" id="nav-links">
+                    <button onclick="showView('home')" class="text-slate-600 hover:text-blue-600 font-semibold transition-colors">Accueil</button>
+                    <button onclick="showView('dashboard')" class="nav-user hidden text-slate-600 hover:text-blue-600 font-semibold transition-colors">Mes Missions</button>
+                    <button id="nav-marketplace" onclick="showView('marketplace')" class="nav-driver hidden text-slate-600 hover:text-blue-600 font-semibold flex items-center transition-colors">
+                        <i data-lucide="search" class="w-4 h-4 mr-1"></i> Missions
+                    </button>
+                    
+                    <button onclick="showView('auth')" id="login-btn" class="nav-guest bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 transition-all">Connexion</button>
+                    
+                    <div id="user-profile" class="nav-user hidden flex items-center space-x-4 border-l pl-6 border-slate-200">
+                        <div class="text-right">
+                            <p id="user-display-name" class="text-sm font-bold text-slate-900 leading-none"></p>
+                            <div class="flex items-center justify-end space-x-1">
+                                <span id="user-role-badge" class="text-[9px] uppercase tracking-widest text-blue-600 font-black"></span>
+                                <i data-lucide="check-circle-2" class="w-3 h-3 text-green-500 hidden" id="verified-icon"></i>
+                            </div>
+                        </div>
+                        <button onclick="handleLogout()" class="text-slate-400 hover:text-red-500 transition-colors"><i data-lucide="log-out"></i></button>
+                    </div>
+                </div>
+
+                <button id="mobile-menu-toggle" class="md:hidden p-2 text-slate-600"><i data-lucide="menu"></i></button>
+            </div>
+        </div>
+
+        <div id="mobile-overlay" class="hidden md:hidden bg-white border-t border-slate-100 p-6 space-y-4 shadow-xl font-medium text-slate-900">
+            <button onclick="showView('home')" class="block w-full text-left py-2">Accueil</button>
+            <button onclick="showView('dashboard')" class="nav-user hidden block w-full text-left py-2">Mes Missions</button>
+            <button onclick="showView('marketplace')" class="nav-driver hidden block w-full text-left py-2">Trouver un trajet</button>
+            <button onclick="showView('auth')" class="nav-guest block w-full bg-blue-600 text-white p-3 rounded-xl font-bold text-center">Connexion</button>
+            <button onclick="handleLogout()" class="nav-user hidden block w-full text-red-600 font-bold py-2 text-left">Déconnexion</button>
+        </div>
+    </nav>
+
+    <main class="pt-20">
+        
+        <!-- HOME VIEW -->
+        <div id="view-home" class="view-content">
+            <!-- Hero Section avec véhicule familial blanc et accessible -->
+            <section class="relative min-h-[90vh] flex items-center bg-slate-900 overflow-hidden">
+                <div class="absolute inset-0 z-0 overflow-hidden">
+                    <!-- Image d'un SUV familial blanc, moderne et accessible (type Peugeot 5008 ou similaire) -->
+                    <img src="https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&q=80&w=1920" class="w-full h-full object-cover scale-110 blur-[1px] opacity-50" alt="Convoyage automobile familial en toute sécurité">
+                    <div class="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/60 to-transparent"></div>
+                </div>
+
+                <div class="relative z-10 max-w-7xl mx-auto px-4 w-full grid lg:grid-cols-2 gap-12 items-center">
+                    <div class="space-y-10 text-white">
+                        <div class="inline-flex items-center space-x-2 bg-blue-500/20 border border-blue-500/30 px-3 py-1.5 rounded-full text-blue-400 font-bold text-xs uppercase tracking-widest animate-pulse">
+                            <i data-lucide="shield-check" class="w-4 h-4"></i>
+                            <span>Partenaire AXA Assurance</span>
+                        </div>
+                        <h1 class="text-6xl md:text-8xl font-black leading-tight tracking-tighter">
+                            Le convoyage <br><span class="text-blue-500 italic">en toute sécurité.</span>
+                        </h1>
+                        <p class="text-xl text-slate-300 max-w-xl leading-relaxed font-light">
+                            MoveMyCar connecte les propriétaires de véhicules avec des convoyeurs certifiés. Une solution fiable pour tous vos transferts, partout en France.
+                        </p>
+                        <div class="flex flex-col sm:flex-row gap-5 pt-4">
+                            <button onclick="document.getElementById('instant-quote').scrollIntoView()" class="px-10 py-5 bg-blue-600 text-white rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-2xl shadow-blue-600/30 active:scale-[0.98]">
+                                Obtenir mon devis
+                            </button>
+                            <button onclick="showView('auth')" class="px-10 py-5 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl font-bold text-lg hover:bg-white/20 transition-all">
+                                Devenir convoyeur
+                            </button>
+                        </div>
+                        <div class="flex items-center space-x-8 pt-8 opacity-60 grayscale hover:grayscale-0 transition-all text-sm font-bold uppercase tracking-widest">
+                            <div class="flex flex-col"><span class="text-2xl font-black">4.9/5</span><span>Avis clients</span></div>
+                            <div class="flex flex-col"><span class="text-2xl font-black">+15k</span><span>Trajets</span></div>
+                            <div class="flex flex-col"><span class="text-2xl font-black">100%</span><span>Sécure</span></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Devis Instantané Dynamique -->
+            <section id="instant-quote" class="py-24 bg-white px-4 relative text-slate-900">
+                <div class="max-w-7xl mx-auto">
+                    <div class="text-center mb-16 space-y-4">
+                        <h2 class="text-blue-600 font-black uppercase tracking-widest text-sm">Outil d'estimation</h2>
+                        <h3 class="text-4xl md:text-5xl font-black tracking-tighter">Votre prix en temps réel</h3>
+                        <p class="text-slate-500 max-w-xl mx-auto">Saisissez votre itinéraire et notre algorithme calcule instantanément le tarif le plus juste basé sur les kilomètres réels.</p>
+                    </div>
+
+                    <div class="bg-slate-900 rounded-[3.5rem] shadow-3xl overflow-hidden flex flex-col lg:flex-row border border-slate-800">
+                        <div class="lg:w-5/12 p-8 md:p-14 text-white space-y-8">
+                            <form id="home-quote-form" class="space-y-6">
+                                <div class="space-y-4">
+                                    <div class="space-y-2">
+                                        <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Point de départ</label>
+                                        <input type="text" id="hq-start" required placeholder="Ex: Paris" class="w-full p-5 bg-slate-800 border border-slate-700 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium text-white">
+                                    </div>
+                                    <div class="space-y-2">
+                                        <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Destination</label>
+                                        <input type="text" id="hq-end" required placeholder="Ex: Marseille" class="w-full p-5 bg-slate-800 border border-slate-700 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium text-white">
+                                    </div>
+                                </div>
+                                <div class="space-y-2">
+                                    <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Modèle du véhicule</label>
+                                    <input type="text" id="hq-car" required placeholder="Tesla Model 3, Clio 5..." class="w-full p-5 bg-slate-800 border border-slate-700 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium text-white">
+                                </div>
+                                
+                                <button type="submit" id="hq-submit" class="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-lg hover:bg-blue-500 transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98]">
+                                    Calculer mon trajet
+                                </button>
+                            </form>
+
+                            <div id="hq-result" class="hidden animate-in fade-in slide-in-from-bottom duration-700 bg-blue-500/10 border border-blue-500/20 p-8 rounded-[2.5rem] space-y-6">
+                                <div class="flex justify-between items-center">
+                                    <div>
+                                        <p class="text-blue-400 text-[10px] font-black uppercase tracking-widest mb-1">Distance estimée</p>
+                                        <p class="text-3xl font-black text-white"><span id="hq-distance-val">0</span> <span class="text-sm font-medium text-slate-400">km</span></p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-blue-400 text-[10px] font-black uppercase tracking-widest mb-1">Estimation TTC</p>
+                                        <p class="text-5xl font-black text-white"><span id="hq-price-val">0</span>€</p>
+                                    </div>
+                                </div>
+                                <button type="button" onclick="goToBooking()" class="w-full py-5 bg-white text-blue-600 rounded-2xl font-black text-lg shadow-xl hover:bg-slate-100 transition-all active:scale-[0.98]">
+                                    Réserver ce transport
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="lg:w-7/12 relative min-h-[500px] bg-slate-800">
+                            <div id="map" class="h-full w-full"></div>
+                            <div class="absolute top-6 left-6 z-[1000] bg-slate-900/80 backdrop-blur p-4 rounded-2xl border border-white/10 flex items-center space-x-3 text-white">
+                                <div class="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                                <span class="text-[10px] font-bold uppercase tracking-widest">Itinéraire optimisé</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Pourquoi MoveMyCar -->
+            <section class="py-24 bg-slate-50 px-4 text-slate-900">
+                <div class="max-w-7xl mx-auto grid lg:grid-cols-2 gap-20 items-center">
+                    <div class="space-y-10">
+                        <div class="space-y-4">
+                            <h2 class="text-blue-600 font-black uppercase tracking-widest text-sm italic">Expertise & Logistique</h2>
+                            <h3 class="text-5xl font-black tracking-tighter leading-tight">Une logistique <span class="text-blue-600 underline underline-offset-8">humaine</span> et performante.</h3>
+                        </div>
+                        <div class="grid gap-8">
+                            <div class="flex gap-6 group">
+                                <div class="flex-shrink-0 w-16 h-16 bg-white rounded-3xl shadow-lg flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all text-slate-900">
+                                    <i data-lucide="shield-check" class="w-8 h-8"></i>
+                                </div>
+                                <div class="space-y-2">
+                                    <h4 class="text-xl font-black italic">Assurance Intégrale</h4>
+                                    <p class="text-slate-500 leading-relaxed font-normal text-sm">Chaque mission est couverte par notre contrat cadre AXA jusqu'à 150 000€. Aucun surcoût, aucune démarche.</p>
+                                </div>
+                            </div>
+                            <div class="flex gap-6 group">
+                                <div class="flex-shrink-0 w-16 h-16 bg-white rounded-3xl shadow-lg flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all text-slate-900">
+                                    <i data-lucide="verified" class="w-8 h-8"></i>
+                                </div>
+                                <div class="space-y-2">
+                                    <h4 class="text-xl font-black italic">Chauffeurs Certifiés</h4>
+                                    <p class="text-slate-500 leading-relaxed font-normal text-sm">Chaque convoyeur est soumis à un processus de vérification strict : permis, casier et tests de conduite.</p>
+                                </div>
+                            </div>
+                            <div class="flex gap-6 group">
+                                <div class="flex-shrink-0 w-16 h-16 bg-white rounded-3xl shadow-lg flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all text-slate-900">
+                                    <i data-lucide="camera" class="w-8 h-8"></i>
+                                </div>
+                                <div class="space-y-2">
+                                    <h4 class="text-xl font-black italic">Transparence HD</h4>
+                                    <p class="text-slate-500 leading-relaxed font-normal text-sm">État des lieux obligatoire avec 12 photos HD horodatées via notre application mobile dédiée.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="relative rounded-[3rem] overflow-hidden shadow-2xl border border-slate-200">
+                        <img src="https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&q=80&w=1000" class="w-full h-[600px] object-cover" alt="Expertise automobile professionnelle">
+                        <div class="absolute inset-0 bg-blue-600/5"></div>
+                        <div class="absolute bottom-10 left-10 right-10 p-10 bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border border-slate-100">
+                            <p class="text-3xl font-black text-slate-900 italic mb-2">"La simplicité au service de l'automobile."</p>
+                            <p class="text-slate-500 font-bold uppercase tracking-widest text-[10px]">- Fleet Manager, Entreprise Partenaire</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: Deux Cibles -->
+            <section class="py-24 bg-white px-4 text-white">
+                <div class="max-w-7xl mx-auto grid md:grid-cols-2 gap-10">
+                    <div class="p-16 bg-slate-900 rounded-[4rem] flex flex-col justify-between group overflow-hidden relative border border-slate-800">
+                        <div class="hero-pattern absolute inset-0"></div>
+                        <div class="relative z-10">
+                            <h3 class="text-4xl font-black mb-6 italic">Particuliers & Pros</h3>
+                            <p class="text-slate-400 text-lg mb-10 leading-relaxed">Faites convoyer votre véhicule par un professionnel au meilleur prix. Déménagements, achats d'occasion, livraisons clients.</p>
+                            <ul class="space-y-4 mb-12">
+                                <li class="flex items-center space-x-3 text-slate-300 font-medium"><i data-lucide="check" class="text-blue-500"></i><span>Livraison porte-à-porte</span></li>
+                                <li class="flex items-center space-x-3 text-slate-300 font-medium"><i data-lucide="check" class="text-blue-500"></i><span>Paiement Stripe sécurisé</span></li>
+                                <li class="flex items-center space-x-3 text-slate-300 font-medium"><i data-lucide="check" class="text-blue-500"></i><span>Suivi temps réel</span></li>
+                            </ul>
+                        </div>
+                        <button onclick="document.getElementById('instant-quote').scrollIntoView()" class="relative z-10 w-full py-5 bg-blue-600 rounded-3xl font-black text-xl hover:bg-blue-500 transition-all active:scale-95">Publier une annonce</button>
+                    </div>
+                    <div class="p-16 bg-blue-600 rounded-[4rem] flex flex-col justify-between shadow-2xl shadow-blue-600/30 group overflow-hidden relative border border-blue-500/20">
+                        <div class="relative z-10">
+                            <h3 class="text-4xl font-black mb-6 italic">Convoyeurs</h3>
+                            <p class="text-blue-100 text-lg mb-10 leading-relaxed">Rentabilisez vos trajets personnels ou devenez convoyeur à temps plein. Gérez vos missions librement depuis notre interface.</p>
+                            <ul class="space-y-4 mb-12">
+                                <li class="flex items-center space-x-3 text-white font-medium"><i data-lucide="check" class="text-slate-900"></i><span>Liberté totale d'horaires</span></li>
+                                <li class="flex items-center space-x-3 text-white font-medium"><i data-lucide="check" class="text-slate-900"></i><span>Virement garanti post-livraison</span></li>
+                                <li class="flex items-center space-x-3 text-white font-medium"><i data-lucide="check" class="text-slate-900"></i><span>Assistance dédiée 24/7</span></li>
+                            </ul>
+                        </div>
+                        <button onclick="showView('auth')" class="relative z-10 w-full py-5 bg-white text-blue-600 rounded-3xl font-black text-xl hover:bg-slate-50 transition-all active:scale-95 text-blue-600">Devenir Partenaire</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- AUTH VIEW -->
+        <div id="view-auth" class="view-content hidden min-h-[85vh] flex items-center justify-center p-4">
+            <div class="bg-white p-12 rounded-[3.5rem] shadow-2xl w-full max-w-md border border-slate-100 text-slate-900">
+                <div class="text-center mb-8">
+                    <h2 id="auth-title" class="text-4xl font-black tracking-tighter">Connexion</h2>
+                    <p id="auth-subtitle" class="text-slate-500 mt-2 font-medium">Accédez à votre espace logistique professionnel</p>
+                </div>
+                <form id="auth-form" class="space-y-4">
+                    <div id="reg-fields" class="hidden space-y-4">
+                        <input type="text" id="auth-name" placeholder="Nom complet" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium">
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" onclick="setRole('client')" id="role-client" class="role-selector p-3 border rounded-xl font-black text-[10px] uppercase tracking-widest btn-active">Je suis Client</button>
+                            <button type="button" onclick="setRole('driver')" id="role-driver" class="role-selector p-3 border rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-600">Je suis Chauffeur</button>
+                        </div>
+                    </div>
+                    <input type="email" id="auth-email" required placeholder="Email professionnel" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium">
+                    <input type="password" id="auth-pass" required placeholder="Mot de passe" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium">
+                    <button type="submit" id="auth-submit-btn" class="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all">Accéder à mon espace</button>
+                </form>
+                <button onclick="toggleAuthMode()" id="auth-toggle-link" class="mt-8 w-full text-center text-sm text-blue-600 font-black uppercase tracking-widest hover:underline">Créer un compte</button>
+            </div>
+        </div>
+
+        <!-- DASHBOARD -->
+        <div id="view-dashboard" class="view-content hidden max-w-7xl mx-auto px-4 py-16 text-slate-900">
+            <div id="profile-warning" class="hidden mb-12 p-6 bg-blue-600/10 border border-blue-600/20 rounded-3xl flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="bg-blue-600 p-2 rounded-lg text-white animate-pulse"><i data-lucide="info" class="w-5 h-5"></i></div>
+                    <div>
+                        <p class="text-sm font-black uppercase tracking-tight">Certification de profil active</p>
+                        <p class="text-sm text-slate-500 font-normal text-xs">Votre espace est prêt. Profitez de la sécurité MoveMyCar.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col md:flex-row justify-between items-end gap-6 mb-16">
+                <div>
+                    <h2 class="text-5xl font-black tracking-tighter italic text-slate-900">Tableau de bord</h2>
+                    <p class="text-slate-500 font-medium mt-2">Pilotez vos demandes de convoyage MoveMyCar.</p>
+                </div>
+                <button onclick="showView('new-mission')" class="nav-client bg-slate-900 text-white px-8 py-4 rounded-2xl font-black shadow-2xl flex items-center hover:bg-blue-600 transition-all active:scale-95">
+                    <i data-lucide="plus-circle" class="mr-3"></i> Nouvelle demande
+                </button>
+            </div>
+            <div id="missions-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-8"></div>
+        </div>
+
+        <!-- MARKETPLACE -->
+        <div id="view-marketplace" class="view-content hidden max-w-7xl mx-auto px-4 py-16 text-slate-900">
+            <div class="mb-16">
+                <h2 class="text-5xl font-black tracking-tighter italic">Marché Live</h2>
+                <p class="text-slate-500 font-medium mt-2">Missions disponibles en temps réel sur toute la France.</p>
+            </div>
+            <div id="market-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-8"></div>
+        </div>
+
+        <!-- NEW MISSION -->
+        <div id="view-new-mission" class="view-content hidden max-w-2xl mx-auto px-4 py-16 text-slate-900">
+            <div class="bg-white p-12 rounded-[3.5rem] shadow-2xl border border-slate-100">
+                <h3 class="text-3xl font-black mb-10 flex items-center italic text-blue-600 underline">Planifier un transfert</h3>
+                <form id="mission-form" class="space-y-8">
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Départ</label>
+                            <input type="text" id="m-start" required placeholder="Ville" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 font-medium">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Arrivée</label>
+                            <input type="text" id="m-end" required placeholder="Ville" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 font-medium">
+                        </div>
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Véhicule</label>
+                        <input type="text" id="m-car" required placeholder="Marque & Modèle" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 font-medium">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Budget proposé (€)</label>
+                        <input type="number" id="m-price" required placeholder="Ex: 250" class="w-full p-5 bg-slate-50 border border-slate-200 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 font-medium">
+                    </div>
+                    <button type="submit" class="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-xl hover:bg-blue-700 shadow-2xl transition-all active:scale-95">Lancer l'annonce</button>
+                    <button type="button" onclick="showView('dashboard')" class="w-full text-slate-400 font-bold uppercase text-[10px] tracking-[0.2em] mt-4">Retour</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- DETAILS VIEW & CHAT -->
+        <div id="view-details" class="view-content hidden max-w-6xl mx-auto px-4 py-16 text-slate-900">
+            <div class="grid lg:grid-cols-4 gap-8">
+                <div class="lg:col-span-1 space-y-6">
+                    <div class="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 relative overflow-hidden">
+                        <div class="flex justify-between items-start mb-8">
+                            <p id="det-status" class="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] font-black uppercase tracking-tighter"></p>
+                            <p id="det-payment" class="inline-block px-2 py-1 bg-amber-50 text-amber-600 rounded text-[9px] font-black uppercase"></p>
+                        </div>
+                        <h4 id="det-car" class="text-3xl font-black mb-2 italic"></h4>
+                        <div class="space-y-8 mt-10 text-sm">
+                            <div class="flex items-start text-slate-500">
+                                <i data-lucide="map-pin" class="w-5 h-5 mr-4 text-blue-600 mt-0.5"></i>
+                                <div>
+                                    <p class="font-black text-slate-900 uppercase text-[10px] tracking-widest">Itinéraire</p>
+                                    <p id="det-route" class="font-medium text-slate-600 mt-1"></p>
+                                </div>
+                            </div>
+                            <div class="flex items-start text-slate-500">
+                                <i data-lucide="user" class="w-5 h-5 mr-4 text-blue-600 mt-0.5"></i>
+                                <div>
+                                    <p class="font-black text-slate-900 uppercase text-[10px] tracking-widest">Responsable</p>
+                                    <p id="det-owner" class="font-medium text-slate-600 mt-1"></p>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="det-actions" class="mt-12 pt-10 border-t border-slate-50 space-y-3"></div>
+                    </div>
+                </div>
+                <div class="lg:col-span-3">
+                    <div class="bg-white rounded-[3.5rem] shadow-2xl border border-slate-100 flex flex-col h-[700px] overflow-hidden">
+                        <div class="p-8 border-b border-slate-50 flex items-center space-x-4 bg-slate-50/50">
+                            <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
+                            <h4 class="font-black uppercase tracking-widest text-xs">Flux de mission sécurisé</h4>
+                        </div>
+                        <div id="chat-messages" class="flex-grow p-10 overflow-y-auto space-y-6 bg-white"></div>
+                        <form id="chat-form" class="p-8 bg-slate-50 border-t flex gap-4">
+                            <input type="text" id="chat-input" placeholder="Message..." class="flex-grow p-5 bg-white border border-slate-200 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-medium">
+                            <button type="submit" class="bg-blue-600 text-white p-5 rounded-3xl shadow-xl hover:bg-blue-700 transition-all active:scale-95"><i data-lucide="send" class="w-6 h-6"></i></button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-white py-20 border-t border-slate-100 text-slate-900">
+        <div class="max-w-7xl mx-auto px-4 grid md:grid-cols-4 gap-12 border-b border-slate-100 pb-16">
+            <div class="col-span-2 space-y-6">
+                <div class="flex items-center space-x-2">
+                    <div class="bg-blue-600 p-2 rounded-lg text-white"><i data-lucide="car"></i></div>
+                    <span class="text-3xl font-black uppercase text-slate-900 tracking-tighter">MOVE<span class="text-blue-600">MYCAR</span></span>
+                </div>
+                <p class="text-slate-500 max-w-sm leading-relaxed font-medium">Leader national du convoyage automobile collaboratif. Transportez votre véhicule en toute sérénité avec l'assurance AXA incluse.</p>
+                <div class="flex space-x-4 text-slate-300">
+                    <i data-lucide="facebook" class="hover:text-blue-600 cursor-pointer transition-colors"></i>
+                    <i data-lucide="linkedin" class="hover:text-blue-600 cursor-pointer transition-colors"></i>
+                    <i data-lucide="instagram" class="hover:text-blue-600 cursor-pointer transition-colors"></i>
+                </div>
+            </div>
+            <div class="space-y-6">
+                <h5 class="font-black text-xs uppercase tracking-[0.2em] text-slate-400">Entreprise</h5>
+                <ul class="space-y-3 font-bold text-slate-600 text-sm">
+                    <li><a href="#" class="hover:text-blue-600">Comment ça marche</a></li>
+                    <li><a href="#" class="hover:text-blue-600">Tarifs</a></li>
+                    <li><a href="#" class="hover:text-blue-600">Avis clients</a></li>
+                </ul>
+            </div>
+            <div class="space-y-6">
+                <h5 class="font-black text-xs uppercase tracking-[0.2em] text-slate-400">Légal</h5>
+                <ul class="space-y-3 font-bold text-slate-600 text-sm">
+                    <li><a href="#" class="hover:text-blue-600">CGV & CGU</a></li>
+                    <li><a href="#" class="hover:text-blue-600">Assurance AXA</a></li>
+                    <li><a href="#" class="hover:text-blue-600">Mentions légales</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="max-w-7xl mx-auto px-4 mt-10 flex flex-col md:flex-row justify-between items-center text-slate-400 font-bold text-[9px] uppercase tracking-widest">
+            <p>© 2025 MoveMyCar France SAS. Tous droits réservés.</p>
+            <p>Made for mobility.</p>
+        </div>
+    </footer>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, where, serverTimestamp, doc, updateDoc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'movemycar-final-v1';
+
+        let currentUser = null;
+        let userData = null;
+        let isLoginMode = true;
+        let selectedRole = 'client';
+        let activeMissionId = null;
+        let unsubMissions = null;
+        let unsubChat = null;
+
+        // UI
+        function showView(viewId) {
+            document.querySelectorAll('.view-content').forEach(v => v.classList.add('hidden'));
+            document.getElementById(`view-${viewId}`).classList.remove('hidden');
+            document.getElementById('mobile-overlay').classList.add('hidden');
+            window.scrollTo(0,0);
+            if (viewId === 'marketplace') listenToMarketplace();
+            if (viewId === 'home' && map) setTimeout(() => map.invalidateSize(), 100);
+        }
+        window.showView = showView;
+
+        document.getElementById('mobile-menu-toggle').addEventListener('click', () => {
+            document.getElementById('mobile-overlay').classList.toggle('hidden');
+        });
+
+        function showToast(msg, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const t = document.createElement('div');
+            t.className = `p-5 mb-3 rounded-[1.5rem] text-white font-black shadow-2xl transition-all translate-x-10 opacity-0 flex items-center uppercase text-[10px] tracking-widest ${type === 'success' ? 'bg-blue-600' : 'bg-red-600'}`;
+            t.innerHTML = `<i data-lucide="${type === 'success' ? 'check-circle' : 'alert-circle'}" class="w-5 h-5 mr-3"></i> ${msg}`;
+            container.appendChild(t);
+            lucide.createIcons();
+            setTimeout(() => t.classList.remove('translate-x-10', 'opacity-0'), 10);
+            setTimeout(() => { t.classList.add('opacity-0'); setTimeout(() => t.remove(), 500); }, 4000);
+        }
+
+        window.setRole = (role) => {
+            selectedRole = role;
+            document.querySelectorAll('.role-selector').forEach(b => b.classList.remove('btn-active'));
+            document.getElementById(`role-${role}`).classList.add('btn-active');
+        };
+
+        // --- MAP ---
+        let map, routeLayer;
+        function initMap() {
+            if (map) return;
+            map = L.map('map', { zoomControl: false }).setView([46.603354, 1.888334], 5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' }).addTo(map);
+        }
+
+        async function geocode(city) {
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}, France`);
+                const data = await res.json();
+                return data.length > 0 ? { lat: data[0].lat, lon: data[0].lon } : null;
+            } catch(e) { return null; }
+        }
+
+        async function calculateRoute(start, end) {
+            const sc = await geocode(start);
+            const ec = await geocode(end);
+            if (!sc || !ec) return null;
+            try {
+                const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${sc.lon},${sc.lat};${ec.lon},${ec.lat}?overview=full&geometries=geojson`);
+                const data = await res.json();
+                if (data.code !== 'Ok') return null;
+                const distance = (data.routes[0].distance / 1000).toFixed(0);
+                if (routeLayer) map.removeLayer(routeLayer);
+                routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#2563eb', weight: 6, opacity: 0.6 } }).addTo(map);
+                map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+                return { distance };
+            } catch(e) { return null; }
+        }
+
+        document.getElementById('home-quote-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const start = document.getElementById('hq-start').value;
+            const end = document.getElementById('hq-end').value;
+            const btn = document.getElementById('hq-submit');
+            btn.innerHTML = `<i data-lucide="loader" class="animate-spin w-5 h-5 inline mr-2 text-white"></i> Analyse...`;
+            lucide.createIcons();
+            const info = await calculateRoute(start, end);
+            if (info) {
+                const price = Math.round(50 + (info.distance * 0.55));
+                document.getElementById('hq-distance-val').innerText = info.distance;
+                document.getElementById('hq-price-val').innerText = price;
+                document.getElementById('hq-result').classList.remove('hidden');
+                btn.innerHTML = "Actualiser l'estimation";
+            } else {
+                showToast("Localisation impossible.", "error");
+                btn.innerHTML = "Calculer mon trajet";
+            }
+            lucide.createIcons();
+        });
+
+        window.goToBooking = () => {
+            if (currentUser) {
+                showView('new-mission');
+                document.getElementById('m-start').value = document.getElementById('hq-start').value;
+                document.getElementById('m-end').value = document.getElementById('hq-end').value;
+                document.getElementById('m-car').value = document.getElementById('hq-car').value;
+                document.getElementById('m-price').value = document.getElementById('hq-price-val').innerText;
+            } else {
+                showToast("Connectez-vous pour finaliser.");
+                showView('auth');
+            }
+        };
+
+        // --- FIREBASE ---
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
+            if (user) {
+                const userRef = doc(db, 'artifacts', appId, 'public', 'users', user.uid);
+                const userSnap = await getDoc(userRef);
+                userData = userSnap.exists() ? userSnap.data() : { role: 'client', verified: true };
+                document.querySelectorAll('.nav-guest').forEach(e => e.classList.add('hidden'));
+                document.querySelectorAll('.nav-user').forEach(e => e.classList.remove('hidden'));
+                if (userData.role === 'driver') {
+                    document.querySelectorAll('.nav-driver').forEach(e => e.classList.remove('hidden'));
+                    document.querySelectorAll('.nav-client').forEach(e => e.classList.add('hidden'));
+                } else {
+                    document.querySelectorAll('.nav-driver').forEach(e => e.classList.add('hidden'));
+                    document.querySelectorAll('.nav-client').forEach(e => e.classList.remove('hidden'));
+                }
+                document.getElementById('user-display-name').innerText = user.displayName || user.email.split('@')[0];
+                document.getElementById('user-role-badge').innerText = userData.role === 'driver' ? 'Chauffeur Pro' : 'Propriétaire';
+                if (userData.verified) document.getElementById('verified-icon').classList.remove('hidden');
+                listenToMyMissions();
+                if (!document.getElementById('view-auth').classList.contains('hidden')) showView('dashboard');
+            } else {
+                document.querySelectorAll('.nav-guest').forEach(e => e.classList.remove('hidden'));
+                document.querySelectorAll('.nav-user, .nav-driver, .nav-client').forEach(e => e.classList.add('hidden'));
+            }
+            lucide.createIcons();
+        });
+
+        async function handleAuth(e) {
+            e.preventDefault();
+            const email = document.getElementById('auth-email').value;
+            const pass = document.getElementById('auth-pass').value;
+            const name = document.getElementById('auth-name').value;
+            try {
+                if (isLoginMode) { await signInWithEmailAndPassword(auth, email, pass); } 
+                else {
+                    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+                    await updateProfile(cred.user, { displayName: name });
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'users', cred.user.uid), { name, role: selectedRole, verified: true, joinedAt: serverTimestamp() });
+                }
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+        document.getElementById('auth-form').addEventListener('submit', handleAuth);
+
+        window.toggleAuthMode = () => {
+            isLoginMode = !isLoginMode;
+            document.getElementById('auth-title').innerText = isLoginMode ? "Connexion" : "Inscription";
+            document.getElementById('reg-fields').classList.toggle('hidden', isLoginMode);
+            document.getElementById('auth-submit-btn').innerText = isLoginMode ? "Accéder à mon espace" : "Créer mon profil";
+            document.getElementById('auth-toggle-link').innerText = isLoginMode ? "Créer un compte" : "Déjà membre ?";
+        };
+
+        window.handleLogout = () => { signOut(auth); showView('home'); };
+
+        async function createMission(e) {
+            e.preventDefault();
+            if (!currentUser) return;
+            const mData = { start: document.getElementById('m-start').value, end: document.getElementById('m-end').value, car: document.getElementById('m-car').value, price: document.getElementById('m-price').value, status: 'En attente', paymentStatus: 'Non réglé', clientId: currentUser.uid, clientName: currentUser.displayName || currentUser.email, driverId: null, createdAt: serverTimestamp() };
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'missions'), mData);
+                showToast("Annonce publiée !");
+                showView('dashboard');
+                document.getElementById('mission-form').reset();
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+        document.getElementById('mission-form').addEventListener('submit', createMission);
+
+        function listenToMyMissions() {
+            if (!currentUser) return;
+            const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'missions');
+            unsubMissions = onSnapshot(colRef, (snap) => {
+                const list = document.getElementById('missions-list');
+                list.innerHTML = "";
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (data.clientId === currentUser.uid || data.driverId === currentUser.uid) renderCard(d.id, data, list);
+                });
+            });
+        }
+
+        function listenToMarketplace() {
+            const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'missions');
+            onSnapshot(colRef, (snap) => {
+                const list = document.getElementById('market-list');
+                list.innerHTML = "";
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (data.status === 'En attente' && data.clientId !== currentUser.uid) renderCard(d.id, data, list);
+                });
+            });
+        }
+
+        function renderCard(id, data, container) {
+            const div = document.createElement('div');
+            div.className = "bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-2xl transition-all cursor-pointer group";
+            div.innerHTML = `
+                <div class="flex justify-between items-start mb-6">
+                    <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-[9px] font-black uppercase tracking-tighter">${data.status}</span>
+                    <span class="text-slate-900 font-black text-xl italic">${data.price}€</span>
+                </div>
+                <h5 class="font-black text-2xl mb-1 italic text-slate-900">${data.car}</h5>
+                <p class="text-xs text-slate-400 font-bold mb-6 uppercase tracking-widest">${data.start} → ${data.end}</p>
+                <div class="pt-6 border-t flex justify-between items-center text-slate-900">
+                    <span class="text-[9px] text-slate-400 font-black uppercase tracking-widest">${data.clientName}</span>
+                    <span class="text-blue-600 text-[10px] font-black uppercase tracking-widest underline underline-offset-4">Gérer</span>
+                </div>
+            `;
+            div.onclick = () => openMission(id, data);
+            container.appendChild(div);
+            lucide.createIcons();
+        }
+
+        async function openMission(id, data) {
+            activeMissionId = id;
+            document.getElementById('det-car').innerText = data.car;
+            document.getElementById('det-route').innerText = `${data.start} → ${data.end}`;
+            document.getElementById('det-owner').innerText = data.clientName;
+            document.getElementById('det-status').innerText = data.status;
+            document.getElementById('det-payment').innerText = data.paymentStatus;
+            const actions = document.getElementById('det-actions');
+            actions.innerHTML = "";
+            if (userData.role === 'driver' && data.status === 'En attente') {
+                const b = document.createElement('button');
+                b.className = "w-full py-5 bg-blue-600 text-white rounded-3xl font-black italic shadow-xl active:scale-95";
+                b.innerText = "Postuler à ce trajet";
+                b.onclick = () => updateStatus(id, 'Accepté', currentUser.uid);
+                actions.appendChild(b);
+            } else if (data.clientId === currentUser.uid) {
+                if (data.status === 'Accepté' && data.paymentStatus !== 'Payé') {
+                    const b = document.createElement('button');
+                    b.className = "w-full py-5 bg-amber-500 text-white rounded-3xl font-black shadow-xl flex items-center justify-center active:scale-95 text-white";
+                    b.innerHTML = `<i data-lucide="credit-card" class="mr-3 w-6 h-6 text-white"></i> Régler ${data.price}€`;
+                    b.onclick = () => openPaymentModal(data.price);
+                    actions.appendChild(b);
+                }
+                if (data.status === 'En attente') {
+                    const b = document.createElement('button');
+                    b.className = "w-full py-4 text-red-500 font-black text-xs uppercase tracking-widest hover:bg-red-50 rounded-2xl transition-all";
+                    b.innerText = "Retirer l'annonce";
+                    b.onclick = async () => { if(confirm("Supprimer l'annonce ?")) { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'missions', id)); showView('dashboard'); } };
+                    actions.appendChild(b);
+                }
+            } else if (data.driverId === currentUser.uid) {
+                if (data.status === 'Accepté' && data.paymentStatus === 'Payé') {
+                    const b = document.createElement('button');
+                    b.className = "w-full py-5 bg-slate-900 text-white rounded-3xl font-black italic active:scale-95 text-white";
+                    b.innerText = "Déclencher le départ";
+                    b.onclick = () => updateStatus(id, 'En cours');
+                    actions.appendChild(b);
+                } else if (data.status === 'En cours') {
+                    const b = document.createElement('button');
+                    b.className = "w-full py-5 bg-green-600 text-white rounded-3xl font-black italic active:scale-95 text-white";
+                    b.innerText = "Valider la remise des clés";
+                    b.onclick = () => updateStatus(id, 'Livré');
+                    actions.appendChild(b);
+                }
+            }
+            showView('details');
+            startChat(id);
+            lucide.createIcons();
+        }
+
+        async function updateStatus(id, status, driverId = null) {
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'missions', id);
+            const upd = { status };
+            if (driverId) upd.driverId = driverId;
+            await updateDoc(ref, upd);
+            showToast(`Statut : ${status}`);
+            showView('dashboard');
+        }
+
+        window.openPaymentModal = (amount) => {
+            document.getElementById('pay-amount').innerText = amount + "€";
+            document.getElementById('payment-modal').classList.remove('hidden');
+        };
+        window.closePaymentModal = () => document.getElementById('payment-modal').classList.add('hidden');
+        document.getElementById('confirm-payment-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('confirm-payment-btn');
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader" class="animate-spin w-5 h-5 text-white"></i>`;
+            lucide.createIcons();
+            setTimeout(async () => {
+                try {
+                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'missions', activeMissionId);
+                    await updateDoc(ref, { paymentStatus: 'Payé' });
+                    showToast("Paiement validé !");
+                    closePaymentModal();
+                    showView('dashboard');
+                } catch (e) { showToast("Erreur", "error"); }
+                btn.disabled = false;
+                btn.innerText = "Valider le règlement";
+            }, 1500);
+        });
+
+        function startChat(id) {
+            if (unsubChat) unsubChat();
+            const q = query(collection(db, 'artifacts', appId, 'public', 'data', `chat_${id}`), orderBy('createdAt', 'asc'));
+            unsubChat = onSnapshot(q, (snap) => {
+                const box = document.getElementById('chat-messages');
+                box.innerHTML = "";
+                snap.forEach(d => {
+                    const m = d.data();
+                    const isMe = m.uid === currentUser.uid;
+                    const b = document.createElement('div');
+                    b.className = `p-5 max-w-[75%] shadow-sm font-medium ${isMe ? 'message-sent' : 'message-received'}`;
+                    b.innerHTML = `<p class="text-[8px] font-black opacity-40 mb-1 uppercase tracking-widest text-slate-900">${isMe ? 'Vous' : m.name}</p><p class="text-sm font-medium">${m.text}</p>`;
+                    box.appendChild(b);
+                });
+                box.scrollTop = box.scrollHeight;
+            });
+        }
+
+        document.getElementById('chat-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            if (!input.value.trim() || !activeMissionId) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', `chat_${activeMissionId}`), { text: input.value, uid: currentUser.uid, name: currentUser.displayName || currentUser.email, createdAt: serverTimestamp() });
+            input.value = "";
+        });
+
+        window.addEventListener('load', () => { initMap(); lucide.createIcons(); });
+    </script>
+</body>
+</html>
